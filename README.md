@@ -1,129 +1,201 @@
 # any2bsky
 
-把 QQ空间导出等社交数据迁移到 Bluesky 的流水线：
-**datasource → 通用事件流 → PDS 合规任务 → DAG 调度的真实发帖**（可断点续传）。
+A pipeline that migrates your social-media history to Bluesky — **from any
+export format**:
 
 ```
-导出目录(只读)  ──convert──▶  data/<源>/events.json
-                              ──plan──▶  data/<源>/tasks.json (+ compressed/)
-                                        ──dry / live──▶  checkpoint 回写 tasks.json
+export dir (read-only) ──convert──▶ data/<source>/events.json
+                                    ──plan──▶ data/<source>/tasks.json (+ compressed/)
+                                              ──dry / live──▶ checkpoint written back
 ```
 
-## 特性
+The converter only knows one thing per source: **turn an export directory
+into the generic event stream** (`shared.event`). Everything else — PDS
+limits, tweetstorms, AVIF compression, dependency-scheduled posting,
+rollback — is source-agnostic and shared by all datasources. QZone is the
+first, fully baked-in datasource; adding another platform is a small,
+well-defined job (see *Datasource guide*).
 
-- **datasource 抽象**：`qzone` 现已内置（留言板自动忽略、说说/相册/视频/分享分类型）；新增数据源只需一个 `build_events(root)` 实现
-- **生态合规**（数值均标注来源）：
-  - 文本 ≤ 300 graphemes/贴，超长自动 tweetstorm 拆贴（带 `1/N` 序号 + reply 链）
-  - 图片每贴 ≤ 4 张（上限读取自 atproto lexicon），单张 ≤ 4000px / ≤ 2MB，超限按长边等比缩放 + **AVIF** 压缩（lossless 起逐级降质）
-  - 视频 ≥ 10min 或 > 300MB **硬失败**；合规视频交由官方 `app.bsky.video` 管线转码（阻塞轮询）
-  - 分享(repost)有链接 → **link facet**；无链接 → 降级为文本
-  - 相册照片描述进 **alt**，不进正文
-- **发布时间还原**：`createdAt` 用原帖时间，不丢失
-- **DAG 执行器**：`reply_to` 是唯一依赖边，**任何任务（无论媒体/文本）都必须等父贴成功后才执行**；媒体任务由 `--heavy` 信号量全局限流（只有互不依赖的媒体任务真正并发），纯文本任务逐个串行；回复链因此天然串行、不占用并发额度
-- **会话缓存**：`login` 交互式登录（密码隐藏），会话存 `data/session.json`，过期自动重登
-- **全量数据收敛 `./data`**：数据源目录永远只读
+## Features
 
-## 安装
+- **Datasource registry**: `source_type + build_events(root)` is all a new
+  platform needs; datasources register at import time
+  (`datasource/__init__.py`). Not limited to QZone in any way.
+- **PDS-compliant planning** (limits all sourced/annotated):
+  - text ≤ 300 graphemes/post; overlong text auto-splits tweetstorm-style
+    (`1/N` prefixes + reply chain)
+  - images ≤ 4 per post (read from the atproto lexicon), each ≤ 4000px /
+    ≤ 2MB; oversized images are resized by the long edge and encoded to
+    **AVIF** (lossless → step-10 quality until within limits)
+  - videos failing ≥ 10 min / > 300MB are hard-failed; compliant videos are
+    uploaded via `uploadBlob` (the library's `send_video` path — the server
+    transcodes)
+  - share/repost with a URL → appended + **link facet**; without a URL →
+    degrades to plain text
+  - album photo captions land in per-image **alt text**, not the post body
+- **Original publish time is restored**: `createdAt` keeps the source
+  timestamp, so your history is dated as it was originally
+- **DAG executor**: `reply_to` is the only dependency edge; any task (media
+  or text) waits for its parent; media tasks are concurrency-limited by
+  `--heavy`, text tasks run serially; chains therefore stay naturally ordered
+- **Session caching**: interactive `login` (password hidden via getpass),
+  session persisted in `data/session.json`, auto-refreshed on expiry
+- **Everything lands in `./data`** — the source export is never written to
+- **Rollback**: `undo` deletes published posts (child-first, own-account-only)
+
+## How your migrated posts appear on Bluesky
+
+Bluesky keeps two timestamps, and the client uses them for different
+surfaces:
+
+| Surface | Timestamp used | What readers see |
+|---|---|---|
+| Feed cards (author/following) — sort **and** display | `indexedAt` | posts show as "posted just now" and are ordered by the migration moment |
+| Post thread page | `createdAt` vs `indexedAt` | if `createdAt` is **≥ 24h** before `indexedAt`, the client shows a pill **「Archived from &lt;original date&gt;」**; tapping it opens: *"This post claims to have been created on &lt;createdAt&gt;, but was first seen by Bluesky on &lt;indexedAt&gt;."* |
+| Chronological feeds (per official docs) | `sortAt` = earlier of createdAt/indexedAt | backfilled posts rank by original time (future outliers fall back to indexedAt) |
+
+In practice: a 2017 QZone post is migrated in 2026, shows in feeds as
+"posted today" (indexedAt), and only inside its thread reads as
+"Archived from 2017-02-03". This is the platform's standard indication for
+imported/backfilled content — a design feature, not a penalty. Our 208-post
+migration was accepted with zero record-level failures.
+
+Note: comments/replies *on* the source posts are not part of the migration
+(only post bodies, media, alt text, and repost links are converted).
+
+## Installation
 
 ```bash
-uv sync            # 或 pip install -e .
+uv sync            # or: pip install -e .
 ```
 
-## 快速开始
+System tools: `ffmpeg` / `ffprobe` (AVIF encoding, dimension/duration
+probing — with them there is no Python image library dependency).
+
+## Quick start
 
 ```bash
-# 1. 登录（交互式，密码隐藏；缓存到 data/session.json）
+# 1. login (interactive; password hidden; session cached to data/session.json)
 python cli.py login
 
-# 2. 转换 + （可选）人工筛选事件
-python cli.py convert <QQ空间导出目录>
-python cli.py filter <QQ空间导出目录>     # 浏览器里勾选保留/删除，保存后写回 events.json
+# 2. convert + (optional) manually filter events
+python cli.py convert <export-dir>
+python cli.py filter <export-dir>      # browser editor to keep/drop events
 
-# 3. 规划（读取已筛选的 events.json；drop 的事件被跳过）
-python cli.py plan   <QQ空间导出目录>
+# 3. plan (reads the filtered events.json; dropped events are skipped)
+python cli.py plan <export-dir>
 
-# 4. 预览（在不写真实帖子的 tasks.dry.json 上干跑）
-python cli.py dry <QQ空间导出目录> --heavy 3
+# 4. preview (dry-run on a tasks.dry.json copy)
+python cli.py dry <export-dir> --heavy 3
 
-# 5. 真实发帖（只复用缓存会话，不需要凭证参数）
-python cli.py live <QQ空间导出目录> --heavy 2
+# 5. actually post (reuses the cached session only)
+python cli.py live <export-dir> --heavy 2
 ```
 
-## CLI 参考（子命令，无布尔开关）
+## CLI reference (subcommands, no boolean switches)
 
-| 命令 | 说明 |
+| Command | Description |
 |---|---|
-| `sources` | 列出已注册数据源 |
-| `login [--handle H] [--password P] [--session F]` | 交互式登录并缓存会话；非交互环境可显式传参 |
-| `convert <root> [--source qzone]` | 数据源 → `data/<源>/events.json` |
-| `filter <root> [--port P]` | **迷你本地 server + 浏览器编辑器**：手动保留/删除事件（勾选→后端写回 `drop` 标记） |
-| `plan <root>` | 读取已筛选的 `events.json` → `data/<源>/tasks.json` + `compressed/`（AVIF） |
-| `dry <root> [--heavy N] [--video-poll S]` | 在 `tasks.dry.json` 副本上干跑 DAG 执行器 |
-| `undo <root> [--dry] [--yes] [--session F]` | **后悔药**：删除已发布的帖子（`state=done` + `post_uri`），子贴先删；删后任务重置 `pending` 可重发；`--dry` 只列出不删除 |
-| `live <root> [--heavy N] [--video-poll S] [--session F]` | 真实发帖（需先 `login` 有缓存且先 `plan`） |
+| `sources` | list registered datasources |
+| `login [--handle H] [--password P] [--session F]` | interactive login + session cache |
+| `convert <root> [--source qzone]` | datasource → `data/<source>/events.json` |
+| `filter <root> [--port P]` | mini local server + browser editor: keep/drop events (backend applies) |
+| `plan <root>` | filtered events → `tasks.json` (+ `compressed/` AVIF) |
+| `dry <root> [--heavy N]` | dry-run the DAG executor on a `tasks.dry.json` copy |
+| `undo <root> [--dry] [--yes] [--session F]` | rollback: delete published posts (child-first; resets tasks to pending) |
+| `live <root> [--heavy N] [--session F]` | real posting (needs a cached login and a prior `plan`) |
 
-凭证环境变量（`login` 子命令的兜底）：`BSKY_HANDLE` / `BSKY_APP_PASSWORD`（app password）。
+Credentials fall back to env vars `BSKY_HANDLE` / `BSKY_APP_PASSWORD`
+(app password) for the `login` command.
 
-## 输出结构（全部在 `./data`，已被 .gitignore 忽略）
+`--heavy N`: global concurrency limit for **media** tasks (only
+mutually-independent media tasks truly parallelize; reply chains and text
+tasks are serial by dependency).
+
+## Output layout (everything in `./data`, gitignored)
 
 ```
 data/
-├── session.json                  # 登录会话缓存
-└── <导出目录名>/
-    ├── events.json               # 通用事件流（v1, version 字段）
-    ├── tasks.json                # 任务数组 + 执行器 checkpoint（断点续传）
-    ├── tasks.dry.json            # dry-run 演示副本
-    └── compressed/               # 超过 4000px/2MB 的图压缩产物(avif)
+├── session.json                  # login session cache
+└── <source-name>/
+    ├── events.json               # generic event stream (v1)
+    ├── tasks.json                # task array + executor checkpoint (resume)
+    ├── tasks.dry.json            # dry-run demo copy
+    └── compressed/               # AVIF outputs for oversized images
 ```
 
-## 任务与断点续传
+## Tasks & resume
 
-- `tasks.json` 顶层只有 `tasks: []`（线性数组，仅 `medias`/`alts` 为数组）
-- 每个任务：`text/medias(alts)/reply_to/link_url/created_at/post_uri/post_cid/parent_uri/state/fail_reason`
-- `state ∈ pending|done|skipped|failed`；执行器每完成一个任务即回写整个文件，中断后从第一个非 `pending` 继续
-- 所有媒体路径为**绝对路径**；`created_at` 保留原帖发布时间
+- `tasks.json` top-level is only `tasks: []` — a flat linear array (the only
+  arrays inside a task are `medias`/`alts`)
+- every task carries
+  `text/medias(alts)/reply_to/link_url/created_at/post_uri/post_cid/parent_uri/state/fail_reason`
+- `state ∈ pending|done|skipped|failed`; the executor rewrites the whole file
+  after every task, so an interrupted run resumes from the first non-pending
+  task
+- all media paths are ABSOLUTE; `created_at` preserves the original publish
+  time; `post_uri`/`post_cid`/`parent_uri` are backfilled after a successful
+  post (this is how replies always resolve their parent)
 
-## 转换规则要点（qzone 数据源）
+## Conversion rules (QZone datasource)
 
-- `Boards`（留言板）**不转换**——是访客留言（含广告），非本人内容；真·说说在 `Messages/json/messages.json`
-- 相册照片按 10 分钟窗口合并为一贴（视频不参与合并）；照片 `desc` 进每图 `alt`
-- 分享：`rt` 有 URL → 正文追加 URL + `link_url` facet；无 URL → 标题/来源降级为文本
-- 邮件/链接 facet 的字节偏移按 UTF-8 计算
+- `Boards` (留言板) is **not converted** — visitor comments/spam, not your
+  content; real posts come from `Messages/json/messages.json`
+- album photos merge within a 10-minute window (videos never merge); photo
+  captions → per-image `alt`
+- repost: with URL → URL appended + `link_url` for link-faceting; without →
+  title/source degrade into plain text
+- link facets use UTF-8 byte offsets
+- anything else already described under *Features*
 
-## 扩展一个数据源
+## Datasource guide (beyond QZone)
+
+Any platform export can be plugged in — nothing is QZone-specific outside
+`datasource/qzone/`:
 
 ```python
-# datasource/your_source/convert.py
+# datasource/my_source/convert.py
 from datasource.base import BaseDataSource
 
-
-class YourSource(BaseDataSource):
+class MySource(BaseDataSource):
     source_type = "my_source"
 
     def build_events(self, root):
-        ...  # 返回 list[shared.event.Event]
+        ...             # parse the export, produce list[shared.event.Event]
         return events
 ```
 
-再在 `datasource/__init__.py` 末尾加一行 `from datasource.your_source import YourSource; register(YourSource)`（启动时注册）。
+then register at startup in `datasource/__init__.py`:
 
-## 项目结构
+```python
+from datasource.my_source import MySource
+register(MySource)
+```
+
+`convert/plan/filter/dry/live/undo` all work unchanged.
+
+## Project structure
 
 ```
-cli.py                  # 终端入口（子命令）
+cli.py                  # terminal entry (subcommands)
 datasource/
-  base.py               # BaseDataSource 抽象
-  __init__.py           # 启动时注册 registry
-  qzone/convert.py      # QQ空间解析
+  base.py               # BaseDataSource abstraction
+  __init__.py           # import-time registry
+  qzone/convert.py      # QZone parsing (the reference datasource)
 shared/
-  event.py              # 通用事件模型（v1）
-  planner.py            # 事件 → PDS 合规任务（截断/tweetstorm/AVIF/检查）
-  executor.py           # DAG 调度执行器（dry/live，checkpoint 回写）
-  auth.py               # 会话缓存登录
-  paths.py              # 所有产物路径中枢（data/）
+  event.py              # generic event model (v1) + load_events
+  planner.py            # events → PDS-compliant tasks (limits/tweetstorm/AVIF)
+  executor.py           # DAG-scheduling executor (dry/live, checkpointing)
+  undoer.py             # rollback ("后悔药")
+  auth.py               # session-cached login
+  filter_server.py      # local editor server (token-protected)
+  paths.py              # all artifact paths (./data)
+tools/editor.html       # browser filter UI served by `filter`
 ```
 
-## 依赖
+## Dependencies
 
-- Python ≥ 3.13，`atproto`（AsyncClient + lexicon models）
-- 系统工具：`ffmpeg`/`ffprobe`（AVIF 压缩、尺寸/时长探测；本机已有则零 Python 图像依赖）
+- Python ≥ 3.13; `atproto` (AsyncClient + lexicon models)
+- system `ffmpeg` / `ffprobe`
+- dev: `ruff` (lint + format via `uv add --dev ruff`; `ruff check --fix` and
+  `ruff format`)
