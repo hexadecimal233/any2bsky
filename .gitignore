@@ -1,0 +1,13 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# any2bsky artifacts (all pipeline outputs live here, never committed)
+data/
+
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.ruff_cache

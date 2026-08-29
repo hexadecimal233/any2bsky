@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>any2bsky · 事件筛选器</title>
+<style>
+  :root { --ok:#1a7f37; --drop:#b42318; --muted:#666; --line:#e2e2e2; --bg:#fafafa; }
+  * { box-sizing: border-box; }
+  body { font: 14px/1.6 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif; margin:0; background:var(--bg); color:#222; }
+  header { position:sticky; top:0; background:#fff; border-bottom:1px solid var(--line); padding:10px 16px; z-index:5; display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+  header h1 { font-size:16px; margin:0 8px 0 0; }
+  .btn { border:1px solid var(--line); background:#fff; border-radius:6px; padding:5px 10px; cursor:pointer; font-size:13px; }
+  .btn:hover { background:#f0f0f0; }
+  .btn.primary { background:var(--ok); border-color:var(--ok); color:#fff; }
+  .btn.primary:hover { filter:brightness(1.1); }
+  .btn.danger { color:var(--drop); }
+  input[type=text], select { border:1px solid var(--line); border-radius:6px; padding:5px 8px; font-size:13px; }
+  .stats { font-size:13px; color:var(--muted); }
+  .stats b { color:#222; }
+  main { max-width:1100px; margin:0 auto; padding:16px; }
+  .ev { display:flex; gap:12px; background:#fff; border:1px solid var(--line); border-radius:8px; padding:10px 12px; margin-bottom:8px; }
+  .ev.dropped { opacity:.55; background:#fff8f7; }
+  .ev input[type=checkbox] { width:18px; height:18px; margin-top:14px; accent-color:var(--ok); }
+  .thumbs { display:flex; gap:8px; flex-shrink:0; }
+  .thumb { width:88px; position:relative; }
+  .thumb img, .thumb video { width:88px; height:88px; object-fit:cover; border-radius:6px; background:#eee; display:block; }
+  .thumb .play { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); width:30px; height:30px; border-radius:50%; background:rgba(0,0,0,.55); display:flex; align-items:center; justify-content:center; pointer-events:none; }
+  .thumb .play::after { content:"▶"; color:#fff; font-size:12px; margin-left:2px; }
+  .thumb .alt { font-size:11px; color:var(--muted); word-break:break-all; overflow:hidden; max-height:44px; line-height:1.35; margin-top:3px; }
+  .meta { flex:1; min-width:0; }
+  .row1 { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .badge { font-size:11px; padding:2px 8px; border-radius:99px; color:#fff; }
+  .b-mood{background:#4a7bd0}.b-album{background:#2e9e6b}.b-video{background:#b5651d}.b-share{background:#8a5bd8}.b-other{background:#888}
+  .time { color:var(--muted); font-size:12px; }
+  .src { color:var(--muted); font-size:12px; }
+  .text { margin-top:4px; white-space:pre-wrap; overflow-wrap:anywhere; }
+  .text.empty { color:var(--muted); font-style:italic; }
+  .rt { margin-top:4px; font-size:12px; color:var(--muted); }
+  .rt a { color:#4a7bd0; }
+  .mark { margin-top:4px; font-size:12px; color:var(--muted); }
+  .empty-hint { text-align:center; color:var(--muted); padding:60px 0; }
+  footer { text-align:center; color:var(--muted); font-size:12px; padding:20px; }
+  #dropSummary { color:var(--drop); }
+</style>
+</head>
+<body>
+<header>
+  <h1>any2bsky · 事件筛选器</h1>
+  <button class="btn primary" id="saveBtn">保存筛选</button>
+  <span class="stats" id="stats"></span>
+  <span class="stats" id="saveState"></span>
+</header>
+
+<main>
+  <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px;">
+    <input type="text" id="search" placeholder="搜索文本 / 标题…  (空=全部)">
+    <select id="typeFilter"><option value="">全部类型</option></select>
+    <select id="stateFilter">
+      <option value="">全部状态</option>
+      <option value="keep">仅保留</option>
+      <option value="drop">仅删除</option>
+    </select>
+    <button class="btn" id="keepAll">全部保留</button>
+    <button class="btn danger" id="dropAll">全部删除</button>
+    <button class="btn" id="invert" disabled>反选(当前视图)</button>
+  </div>
+  <div id="list"><div class="empty-hint">正在从后端加载…</div></div>
+</main>
+
+<footer>
+  打开方式：<code>python cli.py filter &lt;root&gt;</code> —— 页面由本地迷你 server 提供（本机绑定 + 启动时随机的 token 校验，未经授权的程序无法调用本机 API）。勾选=保留，取消=删除；点「保存筛选」由后端写入 <code>data/&lt;源&gt;/events.json</code>，再执行 <code>python cli.py plan &lt;root&gt;</code>。
+</footer>
+
+<script>
+"use strict";
+const $ = s => document.querySelector(s);
+const TOKEN = new URLSearchParams(location.search).get("token");
+if (!TOKEN) {
+  document.body.innerText = "缺少 token：请通过 `python cli.py filter <root>` 启动本页面。";
+  throw new Error("no token");
+}
+const API = p => `${p}?token=${encodeURIComponent(TOKEN)}`;
+
+let events = [];          // raw events from backend
+let keeps = new Map();    // index -> boolean (true = keep)
+
+const TYPE_LABEL = { "qzone.mood":"说说","qzone.album_photo":"相册","qzone.video":"视频","qzone.share":"分享" };
+const TYPE_BADGE = { "qzone.mood":"b-mood","qzone.album_photo":"b-album","qzone.video":"b-video","qzone.share":"b-share" };
+
+function esc(s){ return String(s??"").replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+function humanTime(iso){ if(!iso) return "无时间"; const d=new Date(iso); return isNaN(d)?iso:d.toISOString().replace("T"," ").slice(0,16)+"Z"; }
+function mediaSrc(p){ return `/media?token=${encodeURIComponent(TOKEN)}&path=${encodeURIComponent(p)}`; }
+
+async function init(){
+  const r = await fetch(API("/api/events"));
+  if (!r.ok) { $("#list").innerHTML = `<div class="empty-hint">加载失败：${r.status}</div>`; return; }
+  events = (await r.json()).events || [];
+  keeps = new Map(events.map((_, i) => [i, !events[i].drop]));
+  buildTypeFilter();
+  render();
+}
+function buildTypeFilter(){
+  const set = new Set(events.map(e => e.type).filter(Boolean));
+  const sel = $("#typeFilter");
+  sel.innerHTML = '<option value="">全部类型</option>';
+  for (const t of [...set].sort()){
+    const o = document.createElement("option");
+    o.value = t; o.textContent = TYPE_LABEL[t] || t; sel.appendChild(o);
+  }
+}
+function filteredIndexes(){
+  const q = $("#search").value.trim().toLowerCase();
+  const t = $("#typeFilter").value, st = $("#stateFilter").value;
+  return events.flatMap((e,i)=>{
+    if (t && e.type !== t) return [];
+    const keep = keeps.get(i) ?? true;
+    if (st === "keep" && !keep) return [];
+    if (st === "drop" && keep) return [];
+    if (q && !((e.text||"")+" "+(e.rt?.title||"")).toLowerCase().includes(q)) return [];
+    return [i];
+  });
+}
+function thumbHtml(e){
+  const html = [];
+  for (const m of (e.medias||[])){   // show ALL media; never truncate
+    const alt = m.alt ? esc(m.alt) : "";
+    const tip = alt ? ` title="${alt}"` : "";
+    const isVid = (m.kind === "video") || /\.(mp4|mov|webm)$/i.test(m.path);
+    if (isVid) {
+      const poster = m.poster ? ` poster="${mediaSrc(m.poster)}"` : "";
+      html.push(`<div class="thumb">`
+        + `<video src="${mediaSrc(m.path)}" preload="none" muted playsinline${poster}${tip}></video>`
+        + `<div class="play"></div>`
+        + (alt ? `<div class="alt">${alt}</div>` : "")
+        + `</div>`);
+    } else {
+      html.push(`<div class="thumb">`
+        + `<img src="${mediaSrc(m.path)}" loading="lazy" alt="${alt}"${tip}>`
+        + (alt ? `<div class="alt">${alt}</div>` : "")
+        + `</div>`);
+    }
+  }
+  return html.length ? `<div class="thumbs">${html.join("")}</div>` : "";
+}
+function render(){
+  const idxs = filteredIndexes();
+  const html = [];
+  for (const i of idxs){
+    const e = events[i], keep = keeps.get(i) ?? true;
+    const badge = TYPE_BADGE[e.type] || "b-other", label = TYPE_LABEL[e.type] || e.type;
+    const rt = e.rt && (e.rt.title || e.rt.url) ? e.rt : null;
+    const text = e.text ? esc(e.text.slice(0,400)) : "(无文本)";
+    const rtHtml = rt ? `<div class="rt">引用：${rt.url?`<a href="${esc(rt.url)}" target="_blank">${esc(rt.title||rt.url)}</a>`:esc(rt.title||"")}${rt.source?` · ${esc(rt.source)}`:""}</div>` : "";
+    html.push(`<div class="ev ${keep?"":"dropped"}" data-i="${i}">
+      <input type="checkbox" ${keep?"checked":""} title="勾选=保留, 取消=删除">
+      ${thumbHtml(e)}
+      <div class="meta">
+        <div class="row1">
+          <span class="badge ${badge}">${label}</span>
+          <span class="time">${humanTime(e.time)}</span>
+          <span class="src">${esc(e.source||"")}</span>
+          <span class="mark">${keep?"":"已删除"}</span>
+        </div>
+        <div class="text">${text}</div>
+        ${rtHtml}
+      </div>
+    </div>`);
+  }
+  $("#list").innerHTML = html.join("") || `<div class="empty-hint">没有匹配的事件</div>`;
+  $("#list").querySelectorAll(".ev").forEach(el=>{
+    const i = +el.dataset.i;
+    const cb = el.querySelector("input");
+    cb.addEventListener("change", ()=>{ keeps.set(i, cb.checked); el.classList.toggle("dropped", !cb.checked); el.querySelector(".mark").textContent = cb.checked?"":"已删除"; updateStats(); });
+  });
+  updateStats();
+}
+function updateStats(){
+  const n = events.length, keepN = [...keeps.values()].filter(Boolean).length;
+  $("#stats").innerHTML = `共 <b>${n}</b> · 保留 <b>${keepN}</b> · 删除 <b>${n-keepN}</b>`;
+}
+async function save(){
+  const dropped = [...keeps.entries()].filter(([,v])=>!v).map(([i])=>i);
+  $("#saveState").textContent = "保存中…";
+  try{
+    const r = await fetch(API("/api/filter"), { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({droppedIndexes: dropped}) });
+    const j = await r.json();
+    if (!r.ok || !j.ok) throw new Error((j.error||r.status));
+    $("#saveState").textContent = `已保存（删除 ${j.total_dropped}/${events.length}）。重跑 plan 生效`;
+  }catch(e){ $("#saveState").textContent = `保存失败：${e.message}`; }
+}
+
+$("#search").addEventListener("input", render);
+$("#typeFilter").addEventListener("change", render);
+$("#stateFilter").addEventListener("change", render);
+$("#saveBtn").addEventListener("click", save);
+$("#keepAll").addEventListener("click", ()=>{ events.forEach((_,i)=>keeps.set(i,true)); render(); });
+$("#dropAll").addEventListener("click", ()=>{ if(confirm("删除全部事件？")){ events.forEach((_,i)=>keeps.set(i,false)); render(); } });
+$("#invert").addEventListener("click", ()=>{ for(const i of filteredIndexes()) keeps.set(i, !(keeps.get(i)??true)); render(); });
+
+init();
+</script>
+</body>
+</html>

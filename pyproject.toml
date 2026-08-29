@@ -1,0 +1,16 @@
+[project]
+name = "any2bsky"
+version = "0.1.0"
+requires-python = ">=3.13"
+dependencies = [
+  "atproto>=0.0.71",
+  "beautifulsoup4>=4.15.0",
+]
+
+[project.scripts]
+any2bsky = "cli:main"
+
+[dependency-groups]
+dev = [
+  "ruff",
+]
