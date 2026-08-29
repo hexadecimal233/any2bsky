@@ -1,5 +1,7 @@
 # any2bsky
 
+> **NOTE**: currently most of the codebase is AI generated!!
+
 A pipeline that migrates your social-media history to Bluesky — **from any
 export format**:
 
@@ -147,6 +149,15 @@ data/
   title/source degrade into plain text
 - link facets use UTF-8 byte offsets
 - anything else already described under *Features*
+
+## Datasources
+
+| Datasource | Export format handled | Source / export tool |
+|---|---|---|
+| `qzone` | QQ空间 backup — a `QQ空间备份_<qq>/` directory tree (`Messages/` (说说), `Boards/` (留言板, ignored), `Albums/`, `Videos/`, `Shares/`, `Common/`) | [aqiongbei/qzone_helper](https://github.com/aqiongbei/qzone_helper) |
+
+Datasources register at import time (`datasource/__init__.py`); run
+`python cli.py sources` to list the ones available in your checkout.
 
 ## Datasource guide (beyond QZone)
 
