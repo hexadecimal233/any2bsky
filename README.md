@@ -24,8 +24,7 @@ well-defined job (see *Datasource guide*).
   platform needs; datasources register at import time
   (`datasource/__init__.py`). Not limited to QZone in any way.
 - **PDS-compliant planning** (limits all sourced/annotated):
-  - text ≤ 300 graphemes/post; overlong text auto-splits tweetstorm-style
-    (`1/N` prefixes + reply chain)
+  - text ≤ 300 graphemes/post; overlong text auto-splits into a reply chain
   - images ≤ 4 per post (read from the atproto lexicon), each ≤ 4000px /
     ≤ 2MB; oversized images are resized by the long edge and encoded to
     **AVIF** (lossless → step-10 quality until within limits)

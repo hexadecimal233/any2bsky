@@ -182,21 +182,19 @@ def _split_paragraphs(text: str) -> list[str]:
 
 
 def _tweetstorm(text: str) -> list[str]:
-    """Split long text into numbered tweetstorm posts: ["1/3 ...", "2/3 ...", ...].
+    """Split long text into a reply-chain of posts.
 
-    Returns [text] unchanged when it already fits. Each chunk is re-trimmed so
-    the "i/total " prefix keeps the post within MAX_GRAPHEMES.
+    Returns [text] unchanged when it already fits. Bluesky's UI already shows
+    thread position, so no "i/total" prefix is added; splits stay within
+    MAX_GRAPHEMES.
     """
     if _glen(text) <= MAX_GRAPHEMES:
         return [text]
     raw = _split_paragraphs(text)
-    total = len(raw)
     out = []
-    for i, chunk in enumerate(raw, start=1):
-        prefix = f"{i}/{total} "
-        budget = MAX_GRAPHEMES - _glen(prefix)
-        body = chunk if _glen(chunk) <= budget else chunk[:budget]
-        out.append(prefix + body)
+    for chunk in raw:
+        body = chunk if _glen(chunk) <= MAX_GRAPHEMES else chunk[:MAX_GRAPHEMES]
+        out.append(body)
     return out
 
 
