@@ -1,34 +1,4 @@
-"""Planner: turn generic Events into flat PDS-ready post tasks.
-
-A post task is the smallest unit of work an uploader executes: ONE bluesky
-post. Planning applies the PDS/app.bsky constraints:
-
-  text    : <= 300 graphemes per post  (approximated by codepoints: exact for
-            CJK, conservative for emoji ZWJ sequences)
-  images  : <= 10 per post; each image encoded to AVIF, scaled to the long edge
-            <= 4000px, file <= 2MB (quality stepped down from lossless by 10)
-  video   : one video per post, NOT transcoded locally --- the official
-            app.bsky.video pipeline transcodes it; duration >= 10 min or
-            size > 300MB is a HARD failure (task.state = failed)
-
-Rules fixed by user:
-- Long text is split tweetstorm-style into a reply chain. The executor is a
-  DAG scheduler: `reply_to` is the ONLY dependency edge (the previous post's
-  task id); there are no thread_* fields. Once a post succeeds the executor
-  backfills the record results on the task -- `post_uri` / `post_cid` and
-  `parent_uri` (the parent post's record URI) -- so any reply can always
-  resolve its parent from the task array.
-- Repost/share content is DOWNGRADED (the quoted original has no bluesky
-  counterpart): if rt has a URL, that URL is appended to the body and flagged
-  via `link_url` for link-faceting; without a URL the rt title/source
-  degrades into plain text. rt content is never quoted wholesale.
-- Tasks are fully flat (only `medias` / `alts` are arrays). Every media path
-  is ABSOLUTE. The task list is serialized as a linear JSON array
-  {"tasks": [...]} and doubles as the checkpoint for resume: the executor
-  skips every task whose state != "pending".
-"""
-
-from __future__ import annotations
+"""Planner: turn generic Events into flat PDS-ready post tasks."""
 
 import json
 import os
@@ -60,13 +30,13 @@ from shared.paths import compressed_dir
 #   - alt text       1000 (no longer constrained by the lexicon; conservative cap)
 # --------------------------------------------------------------------------- #
 def _max_images_from_lexicon() -> int:
-    """app.bsky.embed.images maxItems (10) read from the installed lexicon models."""
+    """app.bsky.embed.images maxItems (4) read from the installed lexicon models."""
     info = ap_models.AppBskyEmbedImages.Main.model_fields["images"]
     for meta in info.metadata:
         n = getattr(meta, "max_length", None)
         if isinstance(n, int):
             return n
-    return 10
+    return 4
 
 
 MAX_IMAGES = _max_images_from_lexicon()
@@ -435,10 +405,7 @@ def _prepare_media(
 def _event_to_tasks(ev: Event, root: str, compress_dir: str) -> list[Task]:
     tasks: list[Task] = []
 
-    # repost/share downgrade (the quoted original does NOT exist on bluesky):
-    #  - rt has a URL   -> append the URL to the body and flag it for
-    #    link-faceting via `link_url`; no other rt content enters the text.
-    #  - rt has no URL  -> the rt title/source degrades into plain text.
+    # downgrade repost/share: URL -> link_url, otherwise title/source as text
     text = ev.text
     link_url: str | None = None
     if ev.rt is not None:
@@ -490,7 +457,6 @@ def _event_to_tasks(ev: Event, root: str, compress_dir: str) -> list[Task]:
                 first.medias = first_group.medias
                 first.alts = first_group.alts
                 image_tasks = image_tasks[1:]
-            # a failed image group stays its own state=failed task (not swallowed)
 
     tasks.extend(body_tasks)
 
@@ -499,7 +465,7 @@ def _event_to_tasks(ev: Event, root: str, compress_dir: str) -> list[Task]:
     parent_id = body_tasks[-1].id if body_tasks else None
     for g in image_tasks:
         if g.state == STATE_FAILED:
-            tasks.append(g)  # failed posts stay standalone (never posted)
+            tasks.append(g)
             continue
         if parent_id is not None:
             g.reply_to = parent_id

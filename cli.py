@@ -1,7 +1,5 @@
 """any2bsky terminal runner."""
 
-from __future__ import annotations
-
 import argparse
 import asyncio
 import getpass
@@ -73,7 +71,11 @@ def cmd_login(args: argparse.Namespace) -> int:
 
 
 def cmd_convert(args: argparse.Namespace) -> int:
-    ds: BaseDataSource = get_datasource(args.source)
+    try:
+        ds: BaseDataSource = get_datasource(args.source)
+    except KeyError as e:
+        print(f"[convert] aborted: {e}", file=sys.stderr)
+        return 1
     out = ds.convert(args.root)
     print(f"[convert] {out}")
     return 0
@@ -94,8 +96,7 @@ def _events_media_root(events_json: str, fallback: str) -> str:
 
 
 def cmd_plan(args: argparse.Namespace) -> int:
-    """Plan from the CONVERTED events.json (not a fresh datasource re-parse),
-    so manual filtering (tools/editor.html, {"drop": true}) is honored."""
+    """Plan from the converted events.json, honoring manual filtering ({"drop": true})."""
     src = events_path(args.root)
     if not os.path.exists(src):
         print(
@@ -223,13 +224,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub = ap.add_subparsers(dest="command", required=True, metavar="<command>")
 
-    def source_opt(p: argparse.ArgumentParser) -> None:
-        p.add_argument(
-            "--source",
-            default="qzone",
-            help=f"datasource key ({', '.join(available())}, default: qzone)",
-        )
-
     def heavy_opts(p: argparse.ArgumentParser) -> None:
         p.add_argument(
             "--heavy",
@@ -248,8 +242,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_login)
 
     p = sub.add_parser("convert", help="datasource -> data/<src>/events.json")
+    p.add_argument("source", help=f"import format: {', '.join(available())}")
     p.add_argument("root")
-    source_opt(p)
     p.set_defaults(func=cmd_convert)
 
     p = sub.add_parser(

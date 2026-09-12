@@ -12,8 +12,6 @@ Frontend (tools/editor.html) is served at "/"; it lists events from
 filter to events.json on the BACKEND side.
 """
 
-from __future__ import annotations
-
 import json
 import mimetypes
 import os

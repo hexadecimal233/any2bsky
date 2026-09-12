@@ -21,8 +21,6 @@ Checkpointing:
   ({"tasks": [...]}); resume skips every task whose state != pending.
 """
 
-from __future__ import annotations
-
 import asyncio
 import mimetypes
 import os

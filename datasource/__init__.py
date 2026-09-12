@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from datasource.base import BaseDataSource
 
 _REGISTRY: dict[str, type[BaseDataSource]] = {}

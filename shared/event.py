@@ -1,7 +1,4 @@
-"""Source-agnostic social-media event-stream schema (strongly typed).
-
-This module defines a GENERIC social-media event model so any converter
-(qzone, bluesky, mastodon, weibo, ...) emits the same JSON contract.
+"""Source-agnostic social-media event-stream schema.
 
 An event stream is a JSON document:
 
@@ -13,29 +10,18 @@ An event stream is a JSON document:
       "events": [ Event, ... ]
     }
 
-Generic social-media Event (source-agnostic):
+An Event is:
     {
       "time": str | null,          # ISO-8601 UTC datetime
       "source": str,               # which sub-folder/file it came from
-      "text": str,                 # ALWAYS present (post body; "" if none)
-      "medias": [ Media, ... ],    # typed, discriminated by kind
-      "rt": RepostMeta | null,     # event-level repost/quote metadata (or null)
+      "text": str,                 # post body, "" if none
+      "medias": [ Media, ... ],
+      "rt": RepostMeta | null,     # repost/quote metadata
     }
 
-Media is discriminated by `kind`:
-    { "kind": "image" | "video", "path": RelativePath, "alt": str, "poster": RelativePath | null }
-
-RepostMeta (event-level, not nested inside something else):
-    { "text": str, "url": str, "author": str | null, "source": str | null }
-
-Strong typing rules:
-- `time` is a `datetime | None`.
-- `medias` items are typed `Media` (never raw dicts).
-- `rt` is a typed `RepostMeta | None` at event level.
-- `path` fields are `RelativePath` (relative, non-URL).
+Media: { "kind": "image" | "video", "path": RelativePath, "alt": str, "poster": RelativePath | null }
+RepostMeta: { "text": str, "url": str, "author": str | null, "source": str | null }
 """
-
-from __future__ import annotations
 
 import json
 import os
@@ -50,7 +36,7 @@ VERSION = "v1"
 # Constrained primitives
 # --------------------------------------------------------------------------- #
 class RelativePath(str):
-    """A path that MUST be relative (no scheme, no leading '/', no URL)."""
+    """A path relative to the source export root."""
 
     def __new__(cls, value: str) -> Self:
         s = value.replace("\\", "/")
@@ -128,7 +114,7 @@ class RepostMeta:
 class Event:
     time: datetime | None
     source: str
-    text: str = ""  # ALWAYS present
+    text: str = ""
     medias: list[Media] = field(default_factory=list)
     rt: RepostMeta | None = None  # event-level repost metadata
 

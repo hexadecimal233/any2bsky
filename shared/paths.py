@@ -9,8 +9,6 @@ artifact the pipeline produces lives under <workspace>/data/<source-basename>/:
     compressed/      AVIF compression outputs
 """
 
-from __future__ import annotations
-
 import os
 
 _DATA_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "data"))

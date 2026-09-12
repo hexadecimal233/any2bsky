@@ -1,14 +1,12 @@
 """AsyncClient login with persistent session cache (data/session.json).
 
 Credentials come from explicit args or the environment:
-    BSKY_HANDLE / BSKY_APP_PASSWORD   (app password, not the account password)
+    BSKY_HANDLE / BSKY_APP_PASSWORD
 
 The session string from a successful login is cached on disk (data/session.json,
 see shared.paths) and reused on the next run; if it expires, we fall back to a
 fresh login and refresh the cache.
 """
-
-from __future__ import annotations
 
 import json
 import os
