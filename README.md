@@ -14,8 +14,8 @@ export dir (read-only) ──convert──▶ data/<source>/events.json
 The converter only knows one thing per source: **turn an export directory
 into the generic event stream** (`shared.event`). Everything else — PDS
 limits, tweetstorms, AVIF compression, dependency-scheduled posting,
-rollback — is source-agnostic and shared by all datasources. QZone is the
-first, fully baked-in datasource; adding another platform is a small,
+rollback — is source-agnostic and shared by all datasources. QZone, WeChat
+Moments and Telegram are baked in; adding another platform is a small,
 well-defined job (see *Datasource guide*).
 
 ## Features
@@ -153,34 +153,40 @@ data/
 
 | Datasource | Export format handled | Source / export tool |
 |---|---|---|
-| `qzone` | QQ空间 backup — a `QQ空间备份_<qq>/` directory tree (`Messages/` (说说), `Boards/` (留言板, ignored), `Albums/`, `Videos/`, `Shares/`, `Common/`) | [aqiongbei/qzone_helper](https://github.com/aqiongbei/qzone_helper) |
+| `qzone` | QQ空间 backup — a `QQ空间备份_<qq>/` directory tree (`Messages/`, `Albums/`, `Videos/`, `Shares/`, `Common/`) | [ShunCai/QZoneExport](https://github.com/ShunCai/QZoneExport) |
+| `wechat` | 微信朋友圈 export — a JSON file with a top-level `posts` array + `media/` | [Panther114/Weport](https://github.com/Panther114/Weport) |
+| `telegram` | Telegram chat export (`messages.json` + `attachments/`) | [popstas/telegram-download-chat](https://github.com/popstas/telegram-download-chat) |
 
 Datasources register at import time (`datasource/__init__.py`); run
 `python cli.py sources` to list the ones available in your checkout.
 
 ## Datasource guide (beyond QZone)
 
-Any platform export can be plugged in — nothing is QZone-specific outside
-`datasource/qzone/`:
+Any platform export can be plugged in — nothing is source-specific outside
+`datasource/sources/`:
 
 ```python
-# datasource/my_source/convert.py
+# datasource/sources/my_source.py
 from datasource.base import BaseDataSource
+
 
 class MySource(BaseDataSource):
     source_type = "my_source"
 
     def build_events(self, root):
-        ...             # parse the export, produce list[shared.event.Event]
+        ...  # parse the export, produce list[shared.event.Event]
         return events
 ```
 
 then register at startup in `datasource/__init__.py`:
 
 ```python
-from datasource.my_source import MySource
+from datasource.sources.my_source import MySource
+
 register(MySource)
 ```
+
+Per-source export-format docs live in `datasource/*.md`.
 
 `convert/plan/filter/dry/live/undo` all work unchanged.
 
@@ -191,7 +197,13 @@ cli.py                  # terminal entry (subcommands)
 datasource/
   base.py               # BaseDataSource abstraction
   __init__.py           # import-time registry
-  qzone/convert.py      # QZone parsing (the reference datasource)
+  sources/
+    qzone.py            # QQ空间 adapter
+    wechat.py           # 微信朋友圈 adapter
+    telegram.py         # Telegram adapter
+  qzone.md              # per-source export-format docs
+  wechat.md
+  telegram.md
 shared/
   event.py              # generic event model (v1) + load_events
   planner.py            # events → PDS-compliant tasks (limits/tweetstorm/AVIF)

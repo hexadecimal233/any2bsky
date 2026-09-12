@@ -15,7 +15,6 @@ An event stream is a JSON document:
 
 Generic social-media Event (source-agnostic):
     {
-      "type": str,                 # discriminator for source-specific event kinds
       "time": str | null,          # ISO-8601 UTC datetime
       "source": str,               # which sub-folder/file it came from
       "text": str,                 # ALWAYS present (post body; "" if none)
@@ -127,7 +126,6 @@ class RepostMeta:
 # --------------------------------------------------------------------------- #
 @dataclass
 class Event:
-    type: str  # discriminator for source-specific event kinds
     time: datetime | None
     source: str
     text: str = ""  # ALWAYS present
@@ -136,7 +134,6 @@ class Event:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "type": self.type,
             "time": self.time.isoformat() if self.time is not None else None,
             "source": self.source,
             "text": self.text,
@@ -215,7 +212,6 @@ def _event_from_dict(it: dict[str, Any]) -> Event:
         except ValueError:
             t = None
     return Event(
-        type=it["type"],
         time=t,
         source=it.get("source", ""),
         text=it.get("text", ""),

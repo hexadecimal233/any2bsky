@@ -1,17 +1,4 @@
-"""any2bsky terminal runner (modern subcommand style).
-
-Commands (pipeline steps):
-    sources                 list registered datasources
-    login                   interactive login; caches the session (data/session.json)
-    convert <root>          datasource -> data/<src>/events.json
-    plan <root>             events -> data/<src>/tasks.json (+ compressed/)
-    dry <root>              dry-run the DAG executor on a tasks.dry.json copy
-    live <root>             REAL posting (reuses the cached session only)
-
-All artifacts live under ./data (shared.paths); the source export directory
-is never written to. Datasources are registered at import time
-(datasource/__init__.py); pick one with --source (default: qzone).
-"""
+"""any2bsky terminal runner."""
 
 from __future__ import annotations
 

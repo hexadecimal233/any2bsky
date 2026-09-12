@@ -5,7 +5,7 @@ post. Planning applies the PDS/app.bsky constraints:
 
   text    : <= 300 graphemes per post  (approximated by codepoints: exact for
             CJK, conservative for emoji ZWJ sequences)
-  images  : <= 4 per post; each image encoded to AVIF, scaled to the long edge
+  images  : <= 10 per post; each image encoded to AVIF, scaled to the long edge
             <= 4000px, file <= 2MB (quality stepped down from lossless by 10)
   video   : one video per post, NOT transcoded locally --- the official
             app.bsky.video pipeline transcodes it; duration >= 10 min or
@@ -60,13 +60,13 @@ from shared.paths import compressed_dir
 #   - alt text       1000 (no longer constrained by the lexicon; conservative cap)
 # --------------------------------------------------------------------------- #
 def _max_images_from_lexicon() -> int:
-    """app.bsky.embed.images maxItems (4) read from the installed lexicon models."""
+    """app.bsky.embed.images maxItems (10) read from the installed lexicon models."""
     info = ap_models.AppBskyEmbedImages.Main.model_fields["images"]
     for meta in info.metadata:
         n = getattr(meta, "max_length", None)
         if isinstance(n, int):
             return n
-    return 4
+    return 10
 
 
 MAX_IMAGES = _max_images_from_lexicon()
@@ -99,7 +99,6 @@ class Task:
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
     state: str = STATE_PENDING  # pending | done | skipped | failed
     type: str = "post"
-    event_type: str = ""  # source event type, e.g. qzone.album_photo
     created_at: str | None = None  # original post time (ISO-8601), restored at publish
     text: str = ""
     medias: list[str] = field(default_factory=list)  # ABSOLUTE paths (media exception)
@@ -121,7 +120,6 @@ class Task:
             "id": self.id,
             "state": self.state,
             "type": self.type,
-            "event_type": self.event_type,
             "created_at": self.created_at,
             "text": self.text,
             "medias": list(self.medias),
@@ -384,7 +382,6 @@ def _prepare_media(
         p = os.path.abspath(os.path.join(root, str(m.path)))
         if m.kind == "video":
             t = Task(
-                event_type=ev.type,
                 created_at=ts,
                 text="",
                 medias=[p],
@@ -414,7 +411,6 @@ def _prepare_media(
     image_tasks: list[Task] = []
     for group in image_groups:
         t = Task(
-            event_type=ev.type,
             created_at=ts,
             text="",
             medias=[p for p, _ in group],
@@ -471,7 +467,6 @@ def _event_to_tasks(ev: Event, root: str, compress_dir: str) -> list[Task]:
     ts = ev.time.isoformat() if ev.time is not None else None
     for i, chunk in enumerate(chunks, start=1):
         t = Task(
-            event_type=ev.type,
             created_at=ts,
             text=chunk,
             reply_to=prev_id,
@@ -516,7 +511,6 @@ def _event_to_tasks(ev: Event, root: str, compress_dir: str) -> list[Task]:
     if not tasks:  # completely empty event -> single empty text post
         tasks.append(
             Task(
-                event_type=ev.type,
                 created_at=ev.time.isoformat() if ev.time is not None else None,
                 text="",
             )
