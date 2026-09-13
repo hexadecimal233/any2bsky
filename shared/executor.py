@@ -40,6 +40,7 @@ from shared.planner import (
     STATE_FAILED,
     STATE_PENDING,
     Task,
+    image_size,
     load_tasks,
     write_tasks,
 )
@@ -125,6 +126,20 @@ def build_record(
             record.embed = ap_models.AppBskyEmbedVideo.Main(
                 video=blob_ref(paths[0]), alt=alts[0] or None
             )
+        elif task.gallery:
+            items = []
+            for p, alt in zip(paths, alts):
+                w, h = image_size(p) or (1, 1)
+                items.append(
+                    ap_models.AppBskyEmbedGallery.Image(
+                        alt=alt,
+                        aspect_ratio=ap_models.AppBskyEmbedDefs.AspectRatio(
+                            width=w, height=h
+                        ),
+                        image=blob_ref(p),
+                    )
+                )
+            record.embed = ap_models.AppBskyEmbedGallery.Main(items=items)
         else:
             record.embed = ap_models.AppBskyEmbedImages.Main(
                 images=[

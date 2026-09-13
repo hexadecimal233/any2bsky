@@ -39,9 +39,9 @@ python cli.py live <export-dir> --heavy 2    # real posting
 |---|---|
 | `sources` | list registered datasources |
 | `login [--handle H] [--password P] [--session F]` | interactive login + session cache |
-| `convert <source> <root>` | datasource → `data/<source>/events.json` (qzone/wechat/telegram) |
+| `convert <source> <root> [--skip-uncommented-reposts]` | datasource → `data/<source>/events.json` (qzone/wechat/telegram); skips reposts with no comment of your own |
 | `filter <root> [--port P]` | local browser editor: keep/drop events |
-| `plan <root>` | filtered events → `tasks.json` (+ `compressed/`) |
+| `plan <root> [--no-gallery]` | events → `tasks.json` (+ `compressed/`); gallery is the default (≤10 images/post), `--no-gallery` falls back to the 4-image embed |
 | `dry <root> [--heavy N]` | dry-run the executor on a `tasks.dry.json` copy |
 | `undo <root> [--dry] [--yes] [--session F]` | delete published posts (child-first) |
 | `live <root> [--heavy N] [--session F]` | real posting |
@@ -62,7 +62,7 @@ data/
 ```
 
 `tasks.json` is a flat `{"tasks": [...]}` array; each task carries
-`text/medias(alts)/reply_to/link_url/created_at/state/post_uri/post_cid/parent_uri`.
+`text/medias(alts)/gallery/reply_to/link_url/created_at/state/post_uri/post_cid/parent_uri`.
 It is rewritten after every task, so an interrupted run resumes from the first
 pending task.
 

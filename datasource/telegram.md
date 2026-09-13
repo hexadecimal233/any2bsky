@@ -22,6 +22,7 @@ downloads/
 - 媒体取 `attachment_path`，解析为相对 `<chat_name>/` 的 `attachments/<path>`；仅保留图片 / 视频扩展名，磁盘上不存在的媒体被跳过，文档/音频/贴纸等不转换。
 - 服务消息（`action` 非空：加群/置顶等）不转换。
 - 频道帖子的访客评论（带 `comment_of`）不转换，与 QQ空间留言板同理。
+- 转发消息（`fwd_from`）视为 repost：转发正文进 `rt.text`、原作者进 `rt.author`、`text` 置空；配合 `convert --skip-uncommented-reposts` 可整条跳过。
 - 事件按 `date` 升序排序；账号标题取聊天目录名。
 
 Source key: `telegram`

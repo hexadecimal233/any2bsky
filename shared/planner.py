@@ -40,6 +40,7 @@ def _max_images_from_lexicon() -> int:
 
 
 MAX_IMAGES = _max_images_from_lexicon()
+MAX_GALLERY_IMAGES = 10  # app.bsky.embed.gallery soft limit (lexicon ceiling: 20)
 MAX_GRAPHEMES = 300  # app.bsky.feed.post server limit (graphemes)
 MAX_IMAGE_PX = 4000  # long edge after resize (2026-04 limit)
 MAX_IMAGE_BYTES = 2 * 1024 * 1024  # per-image file limit (raised 1MB -> 2MB)
@@ -73,6 +74,7 @@ class Task:
     text: str = ""
     medias: list[str] = field(default_factory=list)  # ABSOLUTE paths (media exception)
     alts: list[str] = field(default_factory=list)  # one alt per media, may be ""
+    gallery: bool = False  # emit app.bsky.embed.gallery instead of .images
     reply_to: str | None = None  # DAG edge: task id of the parent post
     link_url: str | None = None  # URL embedded in `text`; uploader link-facets it
 
@@ -94,6 +96,7 @@ class Task:
             "text": self.text,
             "medias": list(self.medias),
             "alts": list(self.alts),
+            "gallery": self.gallery,
             "reply_to": self.reply_to,
             "link_url": self.link_url,
             "post_uri": self.post_uri,
@@ -173,7 +176,7 @@ def _run(cmd: list[str]) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, capture_output=True, text=True, check=False)
 
 
-def _image_size(path: str) -> tuple[int, int] | None:
+def image_size(path: str) -> tuple[int, int] | None:
     r = _run(
         [
             "ffprobe",
@@ -296,7 +299,7 @@ def compress_image(src: str, out_dir: str) -> str:
     check is a plain path-exists probe.
     Raises PlannerError if the file still exceeds 2MB at the lowest quality.
     """
-    size = _image_size(src)
+    size = image_size(src)
     if size is None:
         raise PlannerError(f"cannot read dimensions: {src}")
     w, h = size
@@ -335,13 +338,17 @@ def compress_image(src: str, out_dir: str) -> str:
 
 
 def _prepare_media(
-    ev: Event, root: str, compress_dir: str
+    ev: Event,
+    root: str,
+    compress_dir: str,
+    max_images: int = MAX_IMAGES,
+    gallery: bool = False,
 ) -> tuple[list[Task], list[Task]]:
     """Split one event's media into (image_tasks, video_tasks).
 
     Videos are emitted one-per-task WITHOUT transcoding (official pipeline
     transcodes); hard-failed ones become state=failed tasks. Image posts hold
-    at most MAX_IMAGES images.
+    at most `max_images` images.
     """
     videos: list[Task] = []
     image_groups: list[list[tuple[str, str]]] = []  # [(abs_path, alt), ...]
@@ -375,8 +382,8 @@ def _prepare_media(
         else:
             images.append((p, m.alt))
 
-    for i in range(0, len(images), MAX_IMAGES):
-        image_groups.append(images[i : i + MAX_IMAGES])
+    for i in range(0, len(images), max_images):
+        image_groups.append(images[i : i + max_images])
 
     image_tasks: list[Task] = []
     for group in image_groups:
@@ -385,6 +392,7 @@ def _prepare_media(
             text="",
             medias=[p for p, _ in group],
             alts=[a or "" for _, a in group],
+            gallery=gallery,
         )
         compressed: list[str] = []
         alts: list[str] = []
@@ -402,7 +410,9 @@ def _prepare_media(
 # --------------------------------------------------------------------------- #
 # One event -> flat task list (dependency graph flattened via order + reply_to)
 # --------------------------------------------------------------------------- #
-def _event_to_tasks(ev: Event, root: str, compress_dir: str) -> list[Task]:
+def _event_to_tasks(
+    ev: Event, root: str, compress_dir: str, prefer_gallery: bool = False
+) -> list[Task]:
     tasks: list[Task] = []
 
     # downgrade repost/share: URL -> link_url, otherwise title/source as text
@@ -424,7 +434,10 @@ def _event_to_tasks(ev: Event, root: str, compress_dir: str) -> list[Task]:
             if extra:
                 text = (text + "\n" + extra) if text else extra
 
-    image_tasks, video_tasks = _prepare_media(ev, root, compress_dir)
+    max_images = MAX_GALLERY_IMAGES if prefer_gallery else MAX_IMAGES
+    image_tasks, video_tasks = _prepare_media(
+        ev, root, compress_dir, max_images, prefer_gallery
+    )
 
     chunks = _tweetstorm(text)
 
@@ -456,6 +469,7 @@ def _event_to_tasks(ev: Event, root: str, compress_dir: str) -> list[Task]:
             if first_group.state != STATE_FAILED:
                 first.medias = first_group.medias
                 first.alts = first_group.alts
+                first.gallery = first_group.gallery
                 image_tasks = image_tasks[1:]
 
     tasks.extend(body_tasks)
@@ -488,7 +502,10 @@ def _event_to_tasks(ev: Event, root: str, compress_dir: str) -> list[Task]:
 # Public API
 # --------------------------------------------------------------------------- #
 def plan_events(
-    events: list[Event], export_root: str, compress_dir: str | None = None
+    events: list[Event],
+    export_root: str,
+    compress_dir: str | None = None,
+    prefer_gallery: bool = True,
 ) -> list[Task]:
     """Convert events into a flat, PDS-compliant task array.
 
@@ -499,7 +516,9 @@ def plan_events(
     """
     root = os.path.abspath(export_root)
     out_dir = os.path.abspath(compress_dir) if compress_dir else compressed_dir(root)
-    return [t for ev in events for t in _event_to_tasks(ev, root, out_dir)]
+    return [
+        t for ev in events for t in _event_to_tasks(ev, root, out_dir, prefer_gallery)
+    ]
 
 
 def write_tasks(tasks: list[Task], path: str) -> str:

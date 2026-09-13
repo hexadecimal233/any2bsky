@@ -76,7 +76,10 @@ def cmd_convert(args: argparse.Namespace) -> int:
     except KeyError as e:
         print(f"[convert] aborted: {e}", file=sys.stderr)
         return 1
-    out = ds.convert(args.root)
+    out = ds.convert(
+        args.root,
+        skip_uncommented_reposts=args.skip_uncommented_reposts,
+    )
     print(f"[convert] {out}")
     return 0
 
@@ -106,7 +109,7 @@ def cmd_plan(args: argparse.Namespace) -> int:
         return 1
     events, dropped = load_events(src)
     media_root = _events_media_root(src, os.path.abspath(args.root))
-    tasks = plan_events(events, media_root)
+    tasks = plan_events(events, media_root, prefer_gallery=not args.no_gallery)
     out = tasks_path(args.root)
     write_tasks(tasks, out)
     failed = sum(1 for t in tasks if t.state == "failed")
@@ -244,12 +247,22 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("convert", help="datasource -> data/<src>/events.json")
     p.add_argument("source", help=f"import format: {', '.join(available())}")
     p.add_argument("root")
+    p.add_argument(
+        "--skip-uncommented-reposts",
+        action="store_true",
+        help="drop reposts/shares with no comment of your own",
+    )
     p.set_defaults(func=cmd_convert)
 
     p = sub.add_parser(
         "plan", help="events.json -> data/<src>/tasks.json (+ compressed/)"
     )
     p.add_argument("root")
+    p.add_argument(
+        "--no-gallery",
+        action="store_true",
+        help="opt out of app.bsky.embed.gallery (use the 4-image embed instead)",
+    )
     p.set_defaults(func=cmd_plan)
 
     p = sub.add_parser("filter", help="mini-server + browser editor: keep/drop events")

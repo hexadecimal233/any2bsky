@@ -1,7 +1,7 @@
 import os
 from abc import ABC, abstractmethod
 
-from shared.event import Event, EventStream, SourceMeta
+from shared.event import Event, EventStream, SourceMeta, is_uncommented_repost
 from shared.paths import events_path
 
 
@@ -14,11 +14,18 @@ class BaseDataSource(ABC):
     def account_title(self, root: str) -> str:
         return ""
 
-    def convert(self, root: str, output_path: str | None = None) -> str:
+    def convert(
+        self,
+        root: str,
+        output_path: str | None = None,
+        skip_uncommented_reposts: bool = False,
+    ) -> str:
         root = os.path.abspath(root)
         if not os.path.isdir(root):
             raise NotADirectoryError(f"not a directory: {root}")
         events = self.build_events(root)
+        if skip_uncommented_reposts:
+            events = [e for e in events if not is_uncommented_repost(e)]
         stream = EventStream(
             source=SourceMeta(
                 type=self.source_type,

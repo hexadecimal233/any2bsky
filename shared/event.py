@@ -128,6 +128,11 @@ class Event:
         }
 
 
+def is_uncommented_repost(ev: Event) -> bool:
+    """True for a repost/share the user added no text of their own to."""
+    return ev.rt is not None and not ev.text.strip()
+
+
 # --------------------------------------------------------------------------- #
 # Stream
 # --------------------------------------------------------------------------- #

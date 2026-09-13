@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Any
 
 from datasource.base import BaseDataSource
-from shared.event import Event, Media, RelativePath
+from shared.event import Event, Media, RelativePath, RepostMeta
 
 _VIDEO_EXTS = {".mp4", ".mov", ".webm"}
 _IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".avif"}
@@ -70,6 +70,19 @@ def _text_of(msg: dict[str, Any]) -> str:
     return (msg.get("message") or msg.get("text") or "").strip()
 
 
+def _repost_of(msg: dict[str, Any]) -> RepostMeta | None:
+    """A Telegram forward is a repost: the forwarded text is the original,
+    not the user's own comment."""
+    fwd = msg.get("fwd_from")
+    if not isinstance(fwd, dict) or not fwd:
+        return None
+    return RepostMeta(
+        text=_text_of(msg),
+        author=fwd.get("from_name") or None,
+        source="Telegram",
+    )
+
+
 def _build_telegram_events(root: str) -> list[Event]:
     json_path = _find_messages_json(root)
     if json_path is None:
@@ -87,14 +100,15 @@ def _build_telegram_events(root: str) -> list[Event]:
             continue
         if msg.get("comment_of") is not None:  # visitor comments on channel posts
             continue
-        text = _text_of(msg)
+        rt = _repost_of(msg)
+        text = "" if rt is not None else _text_of(msg)
         attachment_path = msg.get("attachment_path")
         medias = []
         if attachment_path:
             m = _media_from_attachment(root, str(attachment_path))
             if m is not None:
                 medias = [m]
-        if not text and not medias:
+        if not text and rt is None and not medias:
             continue
         events.append(
             Event(
@@ -102,6 +116,7 @@ def _build_telegram_events(root: str) -> list[Event]:
                 source="messages",
                 text=text,
                 medias=medias,
+                rt=rt,
             )
         )
 
